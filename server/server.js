@@ -56,8 +56,18 @@ function getLocalIP() {
 app.use(cors());
 app.use(express.json());
 
-// Serve static files from React build
-app.use(express.static(path.join(__dirname, "../client/dist")));
+// Serve static files only in production (when dist exists)
+const fs = require("fs");
+const clientPath = path.join(__dirname, "../client");
+const buildPath = path.join(clientPath, "dist");
+
+// Only serve static files if build exists (production mode)
+if (fs.existsSync(buildPath)) {
+  console.log("Production mode: serving built files");
+  app.use(express.static(buildPath));
+} else {
+  console.log("Development mode: static files served by Vite");
+}
 
 // API endpoint to get local IP
 app.get("/api/get-local-ip", (req, res) => {
@@ -141,9 +151,21 @@ io.on("connection", (socket) => {
   });
 });
 
-// Catch-all handler: send back React's index.html file for client-side routing
+// Catch-all handler: only serve HTML in production mode
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/dist/index.html"));
+  const buildPath = path.join(__dirname, "../client/dist");
+
+  if (fs.existsSync(buildPath)) {
+    // Production: serve built React app
+    const indexPath = path.join(buildPath, "index.html");
+    res.sendFile(indexPath);
+  } else {
+    // Development: redirect to Vite dev server
+    res.status(404).json({
+      error:
+        "In development mode, please use the Vite dev server at http://localhost:5173",
+    });
+  }
 });
 
 server.listen(PORT, "0.0.0.0", () => {
