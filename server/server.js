@@ -1,175 +1,229 @@
 const express = require("express");
 const http = require("http");
-const socketIo = require("socket.io");
-const path = require("path");
-const os = require("os");
+const { Server } = require("socket.io");
 const cors = require("cors");
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
+
+// Enable CORS for express
+app.use(cors());
+app.use(express.json());
+
+// Serve static files (your React build)
+app.use(express.static(path.join(__dirname, "public")));
+
+const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
+    credentials: true,
   },
+  transports: ["websocket", "polling"],
+});
+
+// Store room data and user information
+const rooms = new Map();
+
+// Generate random room ID
+function generateRoomId() {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+// API Routes
+app.post("/api/create-room", (req, res) => {
+  const roomId = generateRoomId();
+  const localIP = getLocalIP();
+  const roomUrl = `http://${localIP}:${PORT}/${roomId}`;
+
+  // Initialize empty room
+  rooms.set(roomId, {
+    elements: [],
+    appState: {},
+    users: new Map(),
+    createdAt: new Date(),
+  });
+
+  res.json({
+    roomId,
+    roomUrl,
+    message: "Room created successfully",
+  });
+});
+
+app.get("/api/room/:roomId", (req, res) => {
+  const { roomId } = req.params;
+  const room = rooms.get(roomId);
+
+  if (room) {
+    res.json({
+      exists: true,
+      userCount: room.users.size,
+      createdAt: room.createdAt,
+    });
+  } else {
+    res.json({ exists: false });
+  }
+});
+
+// Serve the React app for room URLs
+app.get("/:roomId", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Fallback to serve React app
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  // Handle joining a room
+  socket.on("join-room", (data) => {
+    const { roomId, username } = data;
+
+    // Validate room ID
+    if (!roomId || roomId.length < 3) {
+      socket.emit("error", { message: "Invalid room ID" });
+      return;
+    }
+
+    socket.join(roomId);
+
+    // Initialize room if it doesn't exist (for direct URL access)
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, {
+        elements: [],
+        appState: {},
+        users: new Map(),
+        createdAt: new Date(),
+      });
+    }
+
+    const room = rooms.get(roomId);
+
+    // Add user to room
+    const userInfo = {
+      username: username || `User-${socket.id.slice(0, 6)}`,
+      socketId: socket.id,
+      cursor: { x: 0, y: 0 },
+      joinedAt: new Date(),
+    };
+
+    room.users.set(socket.id, userInfo);
+
+    console.log(
+      `User ${userInfo.username} (${socket.id}) joined room ${roomId}`
+    );
+
+    // Send current room state to the new user
+    socket.emit("room-user-change", Array.from(room.users.values()));
+    socket.emit("scene-update", {
+      elements: room.elements,
+      appState: room.appState,
+    });
+
+    // Notify other users about the new user
+    socket.to(roomId).emit("room-user-change", Array.from(room.users.values()));
+    socket.to(roomId).emit("user-joined", userInfo);
+
+    // Handle scene updates (drawing changes)
+    socket.on("client-broadcast", (data) => {
+      const room = rooms.get(roomId);
+      if (room) {
+        // Update room state
+        if (data.elements) {
+          room.elements = data.elements;
+        }
+        if (data.appState) {
+          room.appState = { ...room.appState, ...data.appState };
+        }
+      }
+
+      // Broadcast to other users in the room
+      socket.to(roomId).emit("client-broadcast", data);
+    });
+
+    // Handle cursor/pointer updates
+    socket.on("cursor-update", (cursorData) => {
+      const room = rooms.get(roomId);
+      if (room && room.users.has(socket.id)) {
+        const user = room.users.get(socket.id);
+        user.cursor = cursorData;
+
+        // Broadcast cursor update to others
+        socket.to(roomId).emit("cursor-update", {
+          userId: socket.id,
+          username: user.username,
+          cursor: cursorData,
+        });
+      }
+    });
+
+    // Handle disconnect
+    socket.on("disconnect", () => {
+      console.log(`User ${socket.id} disconnected from room ${roomId}`);
+
+      const room = rooms.get(roomId);
+      if (room) {
+        const user = room.users.get(socket.id);
+        room.users.delete(socket.id);
+
+        // Notify remaining users
+        socket
+          .to(roomId)
+          .emit("room-user-change", Array.from(room.users.values()));
+        socket.to(roomId).emit("user-left", user);
+
+        // Clean up empty rooms after 5 minutes of inactivity
+        if (room.users.size === 0) {
+          setTimeout(() => {
+            if (rooms.has(roomId) && rooms.get(roomId).users.size === 0) {
+              rooms.delete(roomId);
+              console.log(`Room ${roomId} deleted (empty)`);
+            }
+          }, 5 * 60 * 1000); // 5 minutes
+        }
+      }
+    });
+  });
+
+  // Handle generic events for compatibility
+  socket.on("server-broadcast", (data) => {
+    socket.broadcast.emit("server-broadcast", data);
+  });
 });
 
 const PORT = process.env.PORT || 3001;
 
-// Store sessions and their drawing history
-const sessions = {};
+server.listen(PORT, "0.0.0.0", () => {
+  const localIP = getLocalIP();
+  console.log(`🚀 Local collaboration server running on:`);
+  console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`   Network: http://${localIP}:${PORT}`);
+  console.log(`📱 Share room URLs with others on the same WiFi`);
+  console.log(`📊 API Endpoints:`);
+  console.log(`   POST /api/create-room - Create new room`);
+  console.log(`   GET  /api/room/:roomId - Check room status`);
+});
 
-// Get local IP address
+// Helper function to get local IP
 function getLocalIP() {
-  const interfaces = os.networkInterfaces();
-
-  for (const interfaceName in interfaces) {
-    const interface = interfaces[interfaceName];
-    for (const alias of interface) {
-      if (alias.family === "IPv4" && !alias.internal) {
-        // Prioritize local network IPs
-        if (
-          alias.address.startsWith("192.168.") ||
-          alias.address.startsWith("10.") ||
-          alias.address.startsWith("172.")
-        ) {
-          return alias.address;
-        }
-      }
-    }
-  }
-
-  // Fallback to first non-internal IPv4
-  for (const interfaceName in interfaces) {
-    const interface = interfaces[interfaceName];
-    for (const alias of interface) {
-      if (alias.family === "IPv4" && !alias.internal) {
+  const interfaces = require("os").networkInterfaces();
+  for (const devName in interfaces) {
+    const iface = interfaces[devName];
+    for (let i = 0; i < iface.length; i++) {
+      const alias = iface[i];
+      if (
+        alias.family === "IPv4" &&
+        alias.address !== "127.0.0.1" &&
+        !alias.internal
+      ) {
         return alias.address;
       }
     }
   }
-
   return "localhost";
 }
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// Serve static files only in production (when dist exists)
-const fs = require("fs");
-const clientPath = path.join(__dirname, "../client");
-const buildPath = path.join(clientPath, "dist");
-
-// Only serve static files if build exists (production mode)
-if (fs.existsSync(buildPath)) {
-  console.log("Production mode: serving built files");
-  app.use(express.static(buildPath));
-} else {
-  console.log("Development mode: static files served by Vite");
-}
-
-// API endpoint to get local IP
-app.get("/api/get-local-ip", (req, res) => {
-  const localIP = getLocalIP();
-  res.json({ localIP, port: PORT });
-});
-
-// Socket.IO connection handling
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
-
-  // Handle joining a session
-  socket.on("JOIN_SESSION", ({ sessionId }) => {
-    console.log(`User ${socket.id} joining session: ${sessionId}`);
-
-    // Initialize session if it doesn't exist
-    if (!sessions[sessionId]) {
-      sessions[sessionId] = {
-        history: [],
-        clients: new Set(),
-      };
-    }
-
-    // Join the room
-    socket.join(sessionId);
-    sessions[sessionId].clients.add(socket.id);
-
-    // Store sessionId on socket for cleanup
-    socket.sessionId = sessionId;
-
-    // Send current canvas state to the new joiner
-    socket.emit("INITIAL_CANVAS_STATE", {
-      history: sessions[sessionId].history,
-    });
-
-    console.log(
-      `Session ${sessionId} now has ${sessions[sessionId].clients.size} clients`
-    );
-  });
-
-  // Handle drawing segments
-  socket.on("DRAW_SEGMENT", (payload) => {
-    const { sessionId } = socket;
-
-    if (sessionId && sessions[sessionId]) {
-      // Add to history
-      sessions[sessionId].history.push(payload);
-
-      // Broadcast to all other clients in the room
-      socket.to(sessionId).emit("USER_DREW_SEGMENT", payload);
-    }
-  });
-
-  // Handle canvas clear
-  socket.on("CLEAR_CANVAS", () => {
-    const { sessionId } = socket;
-
-    if (sessionId && sessions[sessionId]) {
-      // Clear history
-      sessions[sessionId].history = [];
-
-      // Broadcast to all clients in the room (including sender)
-      io.to(sessionId).emit("CANVAS_CLEARED");
-    }
-  });
-
-  // Handle disconnect
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-
-    const { sessionId } = socket;
-    if (sessionId && sessions[sessionId]) {
-      sessions[sessionId].clients.delete(socket.id);
-
-      // Clean up empty sessions
-      if (sessions[sessionId].clients.size === 0) {
-        console.log(`Cleaning up empty session: ${sessionId}`);
-        delete sessions[sessionId];
-      }
-    }
-  });
-});
-
-// Catch-all handler: only serve HTML in production mode
-app.get("*", (req, res) => {
-  const buildPath = path.join(__dirname, "../client/dist");
-
-  if (fs.existsSync(buildPath)) {
-    // Production: serve built React app
-    const indexPath = path.join(buildPath, "index.html");
-    res.sendFile(indexPath);
-  } else {
-    // Development: redirect to Vite dev server
-    res.status(404).json({
-      error:
-        "In development mode, please use the Vite dev server at http://localhost:5173",
-    });
-  }
-});
-
-server.listen(PORT, "0.0.0.0", () => {
-  const localIP = getLocalIP();
-  console.log(`Server running on http://${localIP}:${PORT}`);
-  console.log(`Local access: http://localhost:${PORT}`);
-});
