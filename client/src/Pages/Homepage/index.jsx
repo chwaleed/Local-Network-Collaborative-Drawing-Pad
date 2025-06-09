@@ -11,14 +11,11 @@ const HomePage = () => {
     setIsCreating(true);
 
     try {
-      // Generate unique session ID
       const sessionId = uuidv4();
 
-      // Get local IP from backend
       const response = await fetch("/api/get-local-ip");
       const { localIP, port } = await response.json();
 
-      // Navigate to drawing page with session info
       navigate(`/draw/${sessionId}`, {
         state: { localIP, port, isHost: true },
       });
