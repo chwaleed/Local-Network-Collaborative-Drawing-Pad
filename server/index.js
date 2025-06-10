@@ -8,7 +8,7 @@ import cors from "cors";
 const serverDebug = debug("server");
 const ioDebug = debug("io");
 const socketDebug = debug("socket");
-
+j;
 require("dotenv").config(
   process.env.NODE_ENV !== "development"
     ? { path: ".env.production" }
@@ -30,9 +30,9 @@ app.use(
 app.use(express.static("public"));
 
 // Method to get local IP address
-const getLocalIP = (): string[] => {
+const getLocalIP = () => {
   const interfaces = networkInterfaces();
-  const localIPs: string[] = [];
+  const localIPs = [];
 
   for (const interfaceName in interfaces) {
     const networkInterface = interfaces[interfaceName];

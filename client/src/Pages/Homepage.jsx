@@ -8,7 +8,7 @@ function HomePage() {
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const [ip, setIp] = useState("");
   const [copied, setCopied] = useState(false);
-  const [newRoomLink, setNewRoomLink] = useState("");
+  const [, setNewRoomLink] = useState("");
 
   useEffect(() => {
     fetchIp();

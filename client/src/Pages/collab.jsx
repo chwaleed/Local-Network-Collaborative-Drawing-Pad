@@ -12,7 +12,6 @@ export function Collab(props) {
   const { excalidrawAPI } = props;
   const [isCollaborating, setIsCollaborating] = useState(false);
   const [roomId, setRoomId] = useState(null);
-  const [ip, setIp] = useState(null);
 
   const portal = useRef(new Portal());
   const lastBroadcastedOrReceivedSceneVersion = useRef(-1);
@@ -60,7 +59,6 @@ export function Collab(props) {
       }
       const data = await response.json();
 
-      setIp(data.primaryIP);
       return data.primaryIP;
     } catch (error) {
       console.error("Failed to fetch IP:", error);

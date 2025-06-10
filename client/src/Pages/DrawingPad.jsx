@@ -34,6 +34,7 @@ function DrawingPad() {
         collabAPI.startCollaboration(roomId);
         setIsConnecting(false);
       } catch (error) {
+        console.error("Failed to start collaboration:", error);
         setConnectionError(true);
         setIsConnecting(false);
       }
@@ -74,6 +75,7 @@ function DrawingPad() {
           url: roomLink,
         });
       } catch (error) {
+        console.error("Error sharing room link:", error);
         copyRoomLink();
       }
     } else {
