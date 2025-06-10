@@ -52,7 +52,8 @@ A real-time collaborative drawing application that allows users on the same loca
    This will start both the backend server (port 3001) and frontend dev server (port 5173) concurrently.
 
 3. **Access the application:**
-   - Open http://localhost:5173 in your browser
+   - npm run build
+   - click the url http://192.168.x.x
    - Click "Create New Session"
    - Share the generated link with others on your local network
 
