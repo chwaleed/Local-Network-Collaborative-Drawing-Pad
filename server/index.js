@@ -4,17 +4,17 @@ import http from "http";
 import { Server as SocketIO } from "socket.io";
 import { networkInterfaces } from "os";
 import cors from "cors";
+import dotenv from "dotenv";
 
 const serverDebug = debug("server");
 const ioDebug = debug("io");
 const socketDebug = debug("socket");
-j;
-require("dotenv").config(
+
+dotenv.config(
   process.env.NODE_ENV !== "development"
     ? { path: ".env.production" }
     : { path: ".env.development" }
 );
-
 const app = express();
 
 const port =
