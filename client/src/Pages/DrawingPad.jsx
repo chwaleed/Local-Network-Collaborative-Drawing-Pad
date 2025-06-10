@@ -21,11 +21,9 @@ function DrawingPad() {
   const [copiedRoomId, setCopiedRoomId] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
-  const [ip, setIp] = useState("");
 
   // Initialize collaboration when component mounts
   useEffect(() => {
-    fetchIp();
     if (collabAPI && roomId) {
       setIsConnecting(true);
       setConnectionError(false);
@@ -41,24 +39,13 @@ function DrawingPad() {
     }
   }, [collabAPI, roomId]);
 
-  const fetchIp = async () => {
-    try {
-      const response = await fetch("http://localhost:3001/local-ip");
-      const data = await response.json();
-      setIp(data.primaryIP);
-    } catch (error) {
-      console.error("Failed to fetch IP:", error);
-      setIp("localhost");
-    }
-  };
-
   const onCollabApiReady = useCallback((api) => {
     setCollabAPI(api);
   }, []);
 
   const copyRoomLink = async () => {
-    if (roomId && ip) {
-      const roomLink = `http://${ip}:5173/room/${roomId}`;
+    if (roomId) {
+      const roomLink = `${window.location.origin}/room/${roomId}`;
       await navigator.clipboard.writeText(roomLink);
       setCopiedRoomId(true);
       setTimeout(() => setCopiedRoomId(false), 2000);
@@ -66,8 +53,8 @@ function DrawingPad() {
   };
 
   const shareRoom = async () => {
-    if (navigator.share && roomId && ip) {
-      const roomLink = `http://${ip}:5173/room/${roomId}`;
+    if (navigator.share && roomId) {
+      const roomLink = `${window.location.origin}/room/${roomId}`;
       try {
         await navigator.share({
           title: "Join my Excalidraw collaboration",
@@ -191,7 +178,7 @@ function DrawingPad() {
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    <span className="hidden sm:block">Copy ID</span>
+                    <span className="hidden sm:block">Copy Link</span>
                   </>
                 )}
               </button>

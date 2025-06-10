@@ -51,20 +51,6 @@ export function Collab(props) {
     [excalidrawAPI]
   );
 
-  const fetchIp = async () => {
-    try {
-      const response = await fetch("http://localhost:3001/local-ip");
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-
-      return data.primaryIP;
-    } catch (error) {
-      console.error("Failed to fetch IP:", error);
-    }
-  };
-
   const handleUserListChange = useCallback(
     (clients) => {
       const currentSocketId = portal.current.socket?.id;
@@ -146,8 +132,7 @@ export function Collab(props) {
   // --- Public API for the UI to call ---
 
   const startCollaboration = async (newRoomId) => {
-    const ipdata = await fetchIp();
-    portal.current.open(newRoomId, ipdata);
+    portal.current.open(newRoomId);
     setRoomId(newRoomId);
     setIsCollaborating(true);
   };
