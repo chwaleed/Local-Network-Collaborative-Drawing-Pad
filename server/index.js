@@ -5,6 +5,14 @@ import { Server as SocketIO } from "socket.io";
 import { networkInterfaces } from "os";
 import cors from "cors";
 import dotenv from "dotenv";
+// FIX: Import 'path' and helpers for ES Modules
+import path from "path";
+import { fileURLToPath } from "url";
+
+// FIX: Recreate __dirname for ES Modules, which is not available by default.
+// This makes file path resolution reliable.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const serverDebug = debug("server");
 const ioDebug = debug("io");
@@ -15,48 +23,46 @@ dotenv.config(
     ? { path: ".env.production" }
     : { path: ".env.development" }
 );
-const app = express();
 
+const app = express();
 const port =
-  process.env.PORT || (process.env.NODE_ENV !== "development" ? 80 : 3002);
+  process.env.PORT || (process.env.NODE_ENV !== "development" ? 3001 : 3002);
 
 console.log(`Server starting on port: ${port}`);
+
+// --- Middleware ---
 app.use(
   cors({
-    origin: "*", // ⚠️ Use specific origin if sending credentials
+    origin: "*",
   })
 );
 
-app.use(express.static("public"));
+// FIX: Serve static files from the React build directory.
+// This must come BEFORE your API routes if they have conflicting paths,
+// but it's standard to place it here.
+app.use(express.static(path.join(__dirname, "../client/dist")));
 
-// Method to get local IP address
-const getLocalIP = () => {
-  const interfaces = networkInterfaces();
-  const localIPs = [];
-
-  for (const interfaceName in interfaces) {
-    const networkInterface = interfaces[interfaceName];
-    if (networkInterface) {
-      for (const net of networkInterface) {
-        // Skip internal (loopback) and non-IPv4 addresses
-        if (net.family === "IPv4" && !net.internal) {
-          localIPs.push(net.address);
-        }
-      }
-    }
-  }
-
-  return localIPs;
-};
-
+// --- API Routes ---
 app.get("/", (req, res) => {
   res.send("Excalidraw collaboration server is up :)");
 });
 
-// New endpoint to get local IP addresses
 app.get("/local-ip", (req, res) => {
   try {
-    const localIPs = getLocalIP();
+    const interfaces = networkInterfaces();
+    const localIPs = [];
+
+    for (const interfaceName in interfaces) {
+      const networkInterface = interfaces[interfaceName];
+      if (networkInterface) {
+        for (const net of networkInterface) {
+          if (net.family === "IPv4" && !net.internal) {
+            localIPs.push(net.address);
+          }
+        }
+      }
+    }
+
     const response = {
       success: true,
       localIPs: localIPs,
@@ -77,24 +83,19 @@ app.get("/local-ip", (req, res) => {
   }
 });
 
-const server = http.createServer(app);
-
-server.listen(port, () => {
-  const localIPs = getLocalIP();
-  serverDebug(`listening on port: ${port}`);
-  console.log(`Server accessible at:`);
-  console.log(`- http://localhost:${port}`);
-  localIPs.forEach((ip) => {
-    console.log(`- http://${ip}:${port}`);
-  });
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/dist", "index.html"));
 });
+
+// --- Server and Socket.IO Initialization ---
+const server = http.createServer(app);
 
 try {
   const io = new SocketIO(server, {
     transports: ["websocket", "polling"],
     cors: {
       allowedHeaders: ["Content-Type", "Authorization"],
-      origin: process.env.CORS_ORIGIN || "*",
+      origin: "*",
       credentials: true,
     },
     allowEIO3: true,
@@ -102,93 +103,79 @@ try {
 
   io.on("connection", (socket) => {
     ioDebug("connection established!");
-
-    // Send init-room immediately when client connects
-    socket.emit("init-room");
+    socket.emit("init-room"); // Send immediately on connection
 
     socket.on("join-room", async (roomID) => {
       socketDebug(`${socket.id} has joined ${roomID}`);
       await socket.join(roomID);
-
       const sockets = await io.in(roomID).fetchSockets();
 
       if (sockets.length <= 1) {
-        // First user in room
         socket.emit("first-in-room");
       } else {
-        // Notify existing users about new user
         socketDebug(`${socket.id} new-user emitted to room ${roomID}`);
         socket.broadcast.to(roomID).emit("new-user", socket.id);
       }
-
-      // Send updated user list to all users in room
       io.in(roomID).emit(
         "room-user-change",
-        sockets.map((socket) => socket.id)
+        sockets.map((s) => s.id)
       );
     });
 
-    // Handle regular broadcasts (matches WS_EVENTS.SERVER) - removed encryption
     socket.on("server-broadcast", (roomID, data) => {
       socketDebug(`${socket.id} sends update to ${roomID}`);
       socket.broadcast.to(roomID).emit("client-broadcast", data);
     });
 
-    // Handle volatile broadcasts (matches WS_EVENTS.SERVER_VOLATILE) - removed encryption
     socket.on("server-volatile-broadcast", (roomID, data) => {
       socketDebug(`${socket.id} sends volatile update to ${roomID}`);
       socket.volatile.broadcast.to(roomID).emit("client-broadcast", data);
     });
 
-    // Handle user follow functionality
     socket.on("user-follow", async (payload) => {
       const roomID = `follow@${payload.userToFollow.socketId}`;
+      const userToFollowSocket = io.sockets.sockets.get(
+        payload.userToFollow.socketId
+      );
+      if (!userToFollowSocket) return;
 
       switch (payload.action) {
         case "FOLLOW": {
           await socket.join(roomID);
-          const sockets = await io.in(roomID).fetchSockets();
-          const followedBy = sockets.map((socket) => socket.id);
-          io.to(payload.userToFollow.socketId).emit(
-            "user-follow-room-change",
-            followedBy
-          );
           break;
         }
         case "UNFOLLOW": {
           await socket.leave(roomID);
-          const sockets = await io.in(roomID).fetchSockets();
-          const followedBy = sockets.map((socket) => socket.id);
-          io.to(payload.userToFollow.socketId).emit(
-            "user-follow-room-change",
-            followedBy
-          );
           break;
         }
       }
+      const sockets = await io.in(roomID).fetchSockets();
+      const followedBy = sockets.map((s) => s.id);
+      userToFollowSocket.emit("user-follow-room-change", followedBy);
     });
 
     socket.on("disconnecting", async () => {
       socketDebug(`${socket.id} has disconnected`);
+      for (const roomID of socket.rooms) {
+        if (roomID === socket.id) continue;
 
-      for (const roomID of Array.from(socket.rooms)) {
         const otherClients = (await io.in(roomID).fetchSockets()).filter(
           (_socket) => _socket.id !== socket.id
         );
 
-        const isFollowRoom = roomID.startsWith("follow@");
-
-        if (!isFollowRoom && otherClients.length > 0) {
-          // Notify remaining users about user list change
+        if (otherClients.length > 0) {
           socket.broadcast.to(roomID).emit(
             "room-user-change",
-            otherClients.map((socket) => socket.id)
+            otherClients.map((s) => s.id)
           );
         }
 
-        if (isFollowRoom && otherClients.length === 0) {
+        if (roomID.startsWith("follow@") && otherClients.length === 0) {
           const socketId = roomID.replace("follow@", "");
-          io.to(socketId).emit("broadcast-unfollow");
+          const userSocket = io.sockets.sockets.get(socketId);
+          if (userSocket) {
+            userSocket.emit("broadcast-unfollow");
+          }
         }
       }
     });
@@ -198,7 +185,6 @@ try {
       socket.removeAllListeners();
     });
 
-    // Handle connection errors
     socket.on("error", (error) => {
       console.error(`Socket error for ${socket.id}:`, error);
     });
@@ -206,3 +192,24 @@ try {
 } catch (error) {
   console.error("Server initialization error:", error);
 }
+
+server.listen(port, () => {
+  // Simplified IP fetching since it's now in an API endpoint
+  const interfaces = networkInterfaces();
+  const localIPs = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const net of interfaces[name]) {
+      if (net.family === "IPv4" && !net.internal) {
+        localIPs.push(net.address);
+      }
+    }
+  }
+
+  serverDebug(`listening on port: ${port}`);
+  console.log(`\nServer accessible at:`);
+  console.log(`- http://localhost:${port}`);
+  localIPs.forEach((ip) => {
+    console.log(`- http://${ip}:${port}`);
+  });
+  console.log("\n");
+});
