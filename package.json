@@ -1,0 +1,11 @@
+{
+  "name": "Collborative drawing pad",
+  "version": "1.0.0",
+  "description": "A real-time collaborative drawing application that allows users on the same local Wi-Fi network to draw together on a shared canvas.",
+  "main": "index.js",
+  "scripts": {
+    "start": "npm run start --prefix server"
+  },
+  "author": "",
+  "license": "ISC"
+}
